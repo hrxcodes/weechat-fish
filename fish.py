@@ -52,21 +52,29 @@
 # IRC utterly broken in terms of security.
 #
 
+#
+# This script has been adapted to use the original FiSH cipher
+# that supports 72byte keys, instead of the incompatible pycrypto
+# implementation.
+#
+
 from __future__ import print_function
 
 SCRIPT_NAME = "fish"
 SCRIPT_AUTHOR = "David Flatz <david@upcs.at>"
-SCRIPT_VERSION = "0.9.3"
+SCRIPT_VERSION = "0.10.0"
 SCRIPT_LICENSE = "GPL3"
 SCRIPT_DESC = "FiSH for weechat"
 CONFIG_FILE_NAME = SCRIPT_NAME
 
 import_ok = True
 
+import base64
 import re
 import struct
 import hashlib
-from os import urandom
+from os import urandom, path
+from ctypes import c_char_p, create_string_buffer, cdll, string_at
 
 try:
     import weechat
@@ -81,6 +89,13 @@ except:
     print("Python Cryptography Toolkit must be installed to use fish")
     import_ok = False
 
+try:
+    bfLib = cdll.LoadLibrary(path.join(path.dirname(__file__),
+                          "blowfish.so"))
+except OSError:
+    print("blowfish.so is missing.")
+    print("Compile it and place it in the same directory as this script.")
+    import_ok = False
 
 #
 # GLOBALS
@@ -234,15 +249,27 @@ class Blowfish:
         if key:
             if len(key) > 72:
                 key = key[:72]
-            self.blowfish = Crypto.Cipher.Blowfish.new(
-                key, Crypto.Cipher.Blowfish.MODE_ECB
-            )
+            self.key = key
 
     def decrypt(self, data):
-        return self.blowfish.decrypt(data)
+        if not self.key:
+            return
+        size = len(data) * 2 + 1
+        cplaintext = create_string_buffer(size)
+        bfLib.decrypt_string(c_char_p(self.key), c_char_p(data),
+                             cplaintext, len(data))
+        cplaintext[size - 1] = '\0'
+        return string_at(cplaintext)
 
     def encrypt(self, data):
-        return self.blowfish.encrypt(data)
+        if not self.key:
+            return
+        size = len(data) * 2 + 1
+        cciphertext = create_string_buffer(size)
+        bfLib.encrypt_string(c_char_p(self.key), c_char_p(data),
+                           cciphertext, len(data))
+        cciphertext[size - 1] = '\0'
+        return string_at(cciphertext)
 
 
 # XXX: Unstable.
@@ -262,24 +289,6 @@ def blowcrypt_b64encode(s):
     return res
 
 
-def blowcrypt_b64decode(s):
-    """A non-standard base64-decode."""
-    B64 = "./0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
-    res = ''
-    while s:
-        left, right = 0, 0
-        for i, p in enumerate(s[0:6]):
-            right |= B64.index(p) << (i * 6)
-        for i, p in enumerate(s[6:12]):
-            left |= B64.index(p) << (i * 6)
-        for i in range(0,4):
-            res += chr(((left & (0xFF << ((3 - i) * 8))) >> ((3 - i) * 8)))
-        for i in range(0,4):
-            res += chr(((right & (0xFF << ((3 - i) * 8))) >> ((3 - i) * 8)))
-        s = s[12:]
-    return res
-
-
 def padto(msg, length):
     """Pads 'msg' with zeroes until it's length is divisible by 'length'.
     If the length of msg is already a multiple of 'length', does nothing."""
@@ -292,7 +301,7 @@ def padto(msg, length):
 
 def blowcrypt_pack(msg, cipher):
     """."""
-    return '+OK ' + blowcrypt_b64encode(cipher.encrypt(padto(msg, 8)))
+    return '+OK ' + cipher.encrypt(padto(msg, 8))
 
 
 def blowcrypt_unpack(msg, cipher):
@@ -303,11 +312,11 @@ def blowcrypt_unpack(msg, cipher):
     if len(rest) < 12:
         raise MalformedError
 
-    if not (len(rest) %12) == 0:
+    if not (len(rest) % 12) == 0:
         rest = rest[:-(len(rest) % 12)]
 
     try:
-        raw = blowcrypt_b64decode(padto(rest, 12))
+        raw = padto(rest, 12)
     except TypeError:
         raise MalformedError
     if not raw:
