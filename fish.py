@@ -86,7 +86,7 @@ except ImportError:
 try:
     import Crypto.Cipher.Blowfish
 except:
-    print("PyCryptodome must be installed to use fish")
+    print("PyCryptodome or PyCrypto must be installed to use fish")
     import_ok = False
 
 try:
@@ -254,13 +254,10 @@ class Blowfish:
         if key[0:4] == "cbc:":
             self.mode = Blowfish.MODE_CBC
             key = key[4:]
+            keylimit = 56
         else:
             self.mode = Blowfish.MODE_ECB
-
-        if self.mode == Blowfish.MODE_ECB:
             keylimit = 72
-        else:
-            keylimit = 56
 
         if len(key) > keylimit:
             key = key[:keylimit]
@@ -1009,6 +1006,12 @@ def fish_cmd_blowkey(data, buffer, args):
     else:
         server_name = weechat.buffer_get_string(buffer, "localvar_server")
 
+    if argv[0] == "exchange":
+        cbc_mode = True
+        if len(argv) >= 2 and argv[1] == "-ecb":
+            cbc_mode = False
+            del argv[1]
+
     buffer_type = weechat.buffer_get_string(buffer, "localvar_type")
     # if no target user has been specified grab the one from the buffer if it is private
     if argv[0] == "exchange" and len(argv) == 1 and buffer_type == "private":
@@ -1062,8 +1065,9 @@ def fish_cmd_blowkey(data, buffer, args):
         if server_name == "":
             return weechat.WEECHAT_RC_ERROR
 
-        weechat.prnt(buffer, "Initiating DH1080 Exchange with %s" % target)
-        fish_DH1080ctx[targetl] = DH1080Ctx(cbc=True)
+        cbc_msg = "CBC" if cbc_mode else "ECB"
+        weechat.prnt(buffer, "Initiating %s DH1080 Exchange with %s" % (cbc_msg, target))
+        fish_DH1080ctx[targetl] = DH1080Ctx(cbc=cbc_mode)
         msg = dh1080_pack(fish_DH1080ctx[targetl])
         weechat.command(buffer, "/mute -all notice -server %s %s %s" % (server_name, target_user, msg))
 
@@ -1273,7 +1277,7 @@ if (__name__ == "__main__" and import_ok and
     weechat.hook_command("blowkey", "Manage FiSH keys",
             "[list] | [genkey] |set [-server <server>] [<target>] <key> "
             "| remove [-server <server>] <target> "
-            "| exchange [-server <server>] [<nick>]",
+            "| exchange [-server <server>] [-ecb] [<nick>]",
             "Add, change or remove key for target or perform DH1080\n"
             "keyexchange with <nick>.\n"
             "Target can be a channel or a nick.\n"
@@ -1287,12 +1291,13 @@ if (__name__ == "__main__" and import_ok and
             "List all keys:             /blowkey\n\n"
             "\n** stores keys in plaintext by default **\n\n"
             "DH1080:                    /blowkey exchange nick\n"
+            "DH1080 (no CBC):           /blowkey exchange -ecb nick\n"
             "\nPlease read the source for a note about DH1080 key exchange\n",
             "list"
             "|| genkey"
             "|| set %(irc_channel)|%(nicks)|-server %(irc_servers) %- "
             "|| remove %(irc_channel)|%(nicks)|-server %(irc_servers) %- "
-            "|| exchange %(nick)|-server %(irc_servers) %-",
+            "|| exchange %(nick)|-server %(irc_servers) %-|-ecb",
             "fish_cmd_blowkey", "")
 
     fish_config_init()
