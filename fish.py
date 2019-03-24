@@ -62,7 +62,7 @@ from __future__ import print_function
 
 SCRIPT_NAME = "fish"
 SCRIPT_AUTHOR = "David Flatz <david@upcs.at>"
-SCRIPT_VERSION = "0.10.0"
+SCRIPT_VERSION = "0.11.0"
 SCRIPT_LICENSE = "GPL3"
 SCRIPT_DESC = "FiSH for weechat"
 CONFIG_FILE_NAME = SCRIPT_NAME
@@ -86,7 +86,7 @@ except ImportError:
 try:
     import Crypto.Cipher.Blowfish
 except:
-    print("Python Cryptography Toolkit must be installed to use fish")
+    print("PyCryptodome must be installed to use fish")
     import_ok = False
 
 try:
@@ -244,32 +244,59 @@ def fish_config_write():
 #
 
 class Blowfish:
+    MODE_ECB = 1
+    MODE_CBC = 2
 
-    def __init__(self, key=None):
-        if key:
-            if len(key) > 72:
-                key = key[:72]
-            self.key = key
+    def __init__(self, key):
+        if not key:
+            raise ValueError("No key for encryption supplied.")
+
+        if key[0:4] == "cbc:":
+            self.mode = Blowfish.MODE_CBC
+            key = key[4:]
+        else:
+            self.mode = Blowfish.MODE_ECB
+
+        if self.mode == Blowfish.MODE_ECB:
+            keylimit = 72
+        else:
+            keylimit = 56
+
+        if len(key) > keylimit:
+            key = key[:keylimit]
+
+        self.key = key
 
     def decrypt(self, data):
-        if not self.key:
-            return
-        size = len(data) * 2 + 1
-        cplaintext = create_string_buffer(size)
-        bfLib.decrypt_string(c_char_p(self.key), c_char_p(data),
-                             cplaintext, len(data))
-        cplaintext[size - 1] = '\0'
-        return string_at(cplaintext)
+        if self.mode == Blowfish.MODE_ECB:
+            size = len(data) * 2 + 1
+            cplaintext = create_string_buffer(size)
+            bfLib.decrypt_string(c_char_p(self.key), c_char_p(data),
+                                 cplaintext, len(data))
+            cplaintext[size - 1] = '\0'
+            return string_at(cplaintext)
+        elif self.mode == Blowfish.MODE_CBC:
+            blowfish = Crypto.Cipher.Blowfish.new(
+                self.key, Crypto.Cipher.Blowfish.MODE_ECB
+            )
+            return cbc_decrypt(blowfish.decrypt, base64.b64decode(data), 8)
 
     def encrypt(self, data):
-        if not self.key:
-            return
-        size = len(data) * 2 + 1
-        cciphertext = create_string_buffer(size)
-        bfLib.encrypt_string(c_char_p(self.key), c_char_p(data),
-                           cciphertext, len(data))
-        cciphertext[size - 1] = '\0'
-        return string_at(cciphertext)
+        if self.mode == Blowfish.MODE_ECB:
+            size = len(data) * 2 + 1
+            cciphertext = create_string_buffer(size)
+            bfLib.encrypt_string(c_char_p(self.key), c_char_p(data),
+                               cciphertext, len(data))
+            cciphertext[size - 1] = '\0'
+            return string_at(cciphertext)
+        elif self.mode == Blowfish.MODE_CBC:
+            blowfish = Crypto.Cipher.Blowfish.new(
+                self.key, Crypto.Cipher.Blowfish.MODE_ECB
+            )
+            ciphertext = cbc_encrypt(blowfish.encrypt, data, 8)
+            return "*{ciphertext}".format(
+                ciphertext=base64.b64encode(ciphertext)
+            )
 
 
 # XXX: Unstable.
@@ -299,6 +326,55 @@ def padto(msg, length):
     return msg
 
 
+def xorstring(a, b, blocksize): # Slow.
+    """xor string a and b, both of length blocksize."""
+    xored = ''
+    for i in xrange(blocksize):
+        xored += chr(ord(a[i]) ^ ord(b[i]))
+    return xored
+
+
+def cbc_encrypt(func, data, blocksize):
+    """The CBC mode. The randomly generated IV is prefixed to the ciphertext.
+    'func' is a function that encrypts data in ECB mode. 'data' is the
+    plaintext. 'blocksize' is the block size of the cipher."""
+    assert len(data) % blocksize == 0
+
+    IV = urandom(blocksize)
+    assert len(IV) == blocksize
+
+    ciphertext = IV
+    for block_index in xrange(len(data) / blocksize):
+        xored = xorstring(data, IV, blocksize)
+        enc = func(xored)
+
+        ciphertext += enc
+        IV = enc
+        data = data[blocksize:]
+
+    assert len(ciphertext) % blocksize == 0
+    return ciphertext
+
+
+def cbc_decrypt(func, data, blocksize):
+    """See cbc_encrypt."""
+    assert len(data) % blocksize == 0
+
+    IV = data[0:blocksize]
+    data = data[blocksize:]
+
+    plaintext = ''
+    for block_index in xrange(len(data) / blocksize):
+        temp = func(data[0:blocksize])
+        temp2 = xorstring(temp, IV, blocksize)
+        plaintext += temp2
+        IV = data[0:blocksize]
+        data = data[blocksize:]
+
+    assert len(plaintext) % blocksize == 0
+    return plaintext
+
+
 def blowcrypt_pack(msg, cipher):
     """."""
     return '+OK ' + cipher.encrypt(padto(msg, 8))
@@ -309,18 +385,26 @@ def blowcrypt_unpack(msg, cipher):
     if not (msg.startswith('+OK ') or msg.startswith('mcps ')):
         raise ValueError
     _, rest = msg.split(' ', 1)
-    if len(rest) < 12:
-        raise MalformedError
 
-    if not (len(rest) % 12) == 0:
-        rest = rest[:-(len(rest) % 12)]
+    if rest[0] == "*":
+        if cipher.mode != Blowfish.MODE_CBC:
+            raise ValueError
+        raw = rest[1:]
+    else:
+        if cipher.mode != Blowfish.MODE_ECB:
+            raise ValueError
+        if len(rest) < 12:
+            raise MalformedError
 
-    try:
-        raw = padto(rest, 12)
-    except TypeError:
-        raise MalformedError
-    if not raw:
-        raise MalformedError
+        if not (len(rest) % 12) == 0:
+            rest = rest[:-(len(rest) % 12)]
+
+        try:
+            raw = padto(rest, 12)
+        except TypeError:
+            raise MalformedError
+        if not raw:
+            raise MalformedError
 
     try:
         plain = cipher.decrypt(raw)
