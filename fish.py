@@ -534,11 +534,12 @@ def dh_validate_public(public, q, p):
 
 class DH1080Ctx:
     """DH1080 context."""
-    def __init__(self):
+    def __init__(self, cbc=False):
         self.public = 0
         self.private = 0
         self.secret = 0
         self.state = 0
+        self.cbc = cbc
 
         bits = 1080
         while True:
@@ -557,7 +558,21 @@ def dh1080_pack(ctx):
         cmd = "DH1080_INIT "
     else:
         cmd = "DH1080_FINISH "
-    return cmd + dh1080_b64encode(int2bytes(ctx.public))
+    reply = cmd + dh1080_b64encode(int2bytes(ctx.public))
+    if ctx.cbc:
+        reply += " CBC"
+    return reply
+
+
+def dh1080_parse(msg):
+    cbc = False
+    cmd, public_raw = msg.split(' ', 1)
+    if ' ' in public_raw:
+        raw_list = public_raw.split(' ')
+        public_raw = raw_list[0]
+        if raw_list[1] == "CBC":
+            cbc = True
+    return cmd, public_raw, cbc
 
 
 def dh1080_unpack(msg, ctx):
@@ -570,11 +585,14 @@ def dh1080_unpack(msg, ctx):
                  "anyway. See RFC 2785 for more details."
 
     if ctx.state == 0:
-        if not msg.startswith("DH1080_INIT "):
+        if not msg.startswith("DH1080_INIT"):
             raise MalformedError
         ctx.state = 1
         try:
-            cmd, public_raw = msg.split(' ', 1)
+            cmd, public_raw, cbc = dh1080_parse(msg)
+            if cbc or cmd == "DH1080_INIT_CBC":
+                ctx.cbc = True
+
             public = bytes2int(dh1080_b64decode(public_raw))
 
             if not 1 < public < p_dh1080:
@@ -593,7 +611,9 @@ def dh1080_unpack(msg, ctx):
             raise MalformedError
         ctx.state = 1
         try:
-            cmd, public_raw = msg.split(' ', 1)
+            cmd, public_raw, cbc = dh1080_parse(msg)
+            ctx.cbc = cbc
+
             public = bytes2int(dh1080_b64decode(public_raw))
 
             if not 1 < public < p_dh1080:
@@ -614,7 +634,10 @@ def dh1080_secret(ctx):
     """."""
     if ctx.secret == 0:
         raise ValueError
-    return dh1080_b64encode(sha256(int2bytes(ctx.secret)))
+    key = dh1080_b64encode(sha256(int2bytes(ctx.secret)))
+    if ctx.cbc:
+        key = "cbc:" + key
+    return key
 
 
 def bytes2int(b):
@@ -682,14 +705,14 @@ def fish_modifier_in_notice_cb(data, modifier, server_name, string):
     global fish_DH1080ctx, fish_keys, fish_cyphers
 
     match = re.match(
-        r"^(:(.*?)!.*? NOTICE (.*?) :)((DH1080_INIT |DH1080_FINISH |\+OK |mcps )?.*)$",
+        r"^(:(.*?)!.*? NOTICE (.*?) :)((DH1080_INIT |DH1080_INIT_CBC |DH1080_FINISH |\+OK |mcps )?.*)$",
         string)
     #match.group(0): message
     #match.group(1): msg without payload
     #match.group(2): source
     #match.group(3): target
     #match.group(4): msg
-    #match.group(5): DH1080_INIT |DH1080_FINISH
+    #match.group(5): DH1080_INIT |DH1080_INIT_CBC |DH1080_FINISH
     if not match or not match.group(5):
         return string
 
@@ -706,7 +729,10 @@ def fish_modifier_in_notice_cb(data, modifier, server_name, string):
             fish_announce_unencrypted(buffer, target)
             return string
 
-        fish_alert(buffer, "Key exchange for %s sucessful" % target)
+        msg = "Key exchange for %s sucessful" % target
+        if fish_DH1080ctx[targetl].cbc:
+            msg += " (CBC mode)"
+        fish_alert(buffer, msg)
 
         fish_keys[targetl] = dh1080_secret(fish_DH1080ctx[targetl])
         if targetl in fish_cyphers:
@@ -715,10 +741,10 @@ def fish_modifier_in_notice_cb(data, modifier, server_name, string):
 
         return ""
 
-    if match.group(5) == "DH1080_INIT ":
+    if match.group(5).startswith("DH1080_INIT"):
         fish_DH1080ctx[targetl] = DH1080Ctx()
 
-        msg = ' '.join(match.group(4).split()[0:2])
+        msg = ' '.join(match.group(4).split()[0:3])
 
         if not dh1080_unpack(msg, fish_DH1080ctx[targetl]):
             fish_announce_unencrypted(buffer, target)
@@ -726,7 +752,10 @@ def fish_modifier_in_notice_cb(data, modifier, server_name, string):
 
         reply = dh1080_pack(fish_DH1080ctx[targetl])
 
-        fish_alert(buffer, "Key exchange initiated by %s. Key set." % target)
+        msg = "Key exchange initiated by %s. Key set." % target
+        if fish_DH1080ctx[targetl].cbc:
+            msg += " (CBC mode)"
+        fish_alert(buffer, msg)
 
         weechat.command(buffer, "/mute -all notice %s %s" % (
                 match.group(2), reply))
@@ -1034,7 +1063,7 @@ def fish_cmd_blowkey(data, buffer, args):
             return weechat.WEECHAT_RC_ERROR
 
         weechat.prnt(buffer, "Initiating DH1080 Exchange with %s" % target)
-        fish_DH1080ctx[targetl] = DH1080Ctx()
+        fish_DH1080ctx[targetl] = DH1080Ctx(cbc=True)
         msg = dh1080_pack(fish_DH1080ctx[targetl])
         weechat.command(buffer, "/mute -all notice -server %s %s %s" % (server_name, target_user, msg))
 
