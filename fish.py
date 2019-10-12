@@ -138,7 +138,7 @@ def fish_config_keys_write_cb(data, config_file, section_name):
     global fish_keys, fish_secure_cipher
 
     weechat.config_write_line(config_file, section_name, "")
-    for target, key in sorted(fish_keys.iteritems()):
+    for target, key in sorted(fish_keys.items()):
 
         if fish_secure_cipher != None:
             ### ENCRYPT Targets/Keys ###
@@ -262,37 +262,59 @@ class Blowfish:
         if len(key) > keylimit:
             key = key[:keylimit]
 
-        self.key = key
+        self.key = key.encode("utf-8")
 
     def decrypt(self, data):
+        """
+        Returns ECB/CBC decrypted string, depending on the key type
+
+        Expects utf-8 encoded or raw byte encrypted string
+        Returns utf-8 encoded decrypted string
+        """
+        if type(data) == str:
+            data = data.encode("utf-8")
+
         if self.mode == Blowfish.MODE_ECB:
             size = len(data) * 2 + 1
             cplaintext = create_string_buffer(size)
             bfLib.decrypt_string(c_char_p(self.key), c_char_p(data),
                                  cplaintext, len(data))
-            cplaintext[size - 1] = '\0'
-            return string_at(cplaintext)
+            cplaintext[size - 1] = b'\0'
+            plaintext = string_at(cplaintext)
         elif self.mode == Blowfish.MODE_CBC:
             blowfish = Crypto.Cipher.Blowfish.new(
                 self.key, Crypto.Cipher.Blowfish.MODE_ECB
             )
-            return cbc_decrypt(blowfish.decrypt, base64.b64decode(data), 8)
+            plaintext = cbc_decrypt(blowfish.decrypt, base64.b64decode(data), 8)
+
+        if type(plaintext) == bytes:
+            plaintext = plaintext.decode("utf-8")
+        return plaintext
 
     def encrypt(self, data):
+        """
+        Returns ECB/CBC encrypted string, depending on the key type
+
+        Expects utf-8 encoded or raw byte plaintext string
+        Returns utf-8 encoded encrypted string
+        """
+        if type(data) == str:
+            data = data.encode("utf-8")
+
         if self.mode == Blowfish.MODE_ECB:
             size = len(data) * 2 + 1
             cciphertext = create_string_buffer(size)
             bfLib.encrypt_string(c_char_p(self.key), c_char_p(data),
                                cciphertext, len(data))
-            cciphertext[size - 1] = '\0'
-            return string_at(cciphertext)
+            cciphertext[size - 1] = b'\0'
+            return string_at(cciphertext).decode("utf-8")
         elif self.mode == Blowfish.MODE_CBC:
             blowfish = Crypto.Cipher.Blowfish.new(
                 self.key, Crypto.Cipher.Blowfish.MODE_ECB
             )
             ciphertext = cbc_encrypt(blowfish.encrypt, data, 8)
             return "*{ciphertext}".format(
-                ciphertext=base64.b64encode(ciphertext)
+                ciphertext=base64.b64encode(ciphertext).decode("utf-8")
             )
 
 
@@ -303,10 +325,10 @@ def blowcrypt_b64encode(s):
     res = ''
     while s:
         left, right = struct.unpack('>LL', s[:8])
-        for i in xrange(6):
+        for i in range(6):
             res += B64[right & 0x3f]
             right >>= 6
-        for i in xrange(6):
+        for i in range(6):
             res += B64[left & 0x3f]
             left >>= 6
         s = s[8:]
@@ -318,16 +340,16 @@ def padto(msg, length):
     If the length of msg is already a multiple of 'length', does nothing."""
     L = len(msg)
     if L % length:
-        msg += '\x00' * (length - L % length)
+        msg += b'\x00' * (length - L % length)
     assert len(msg) % length == 0
     return msg
 
 
 def xorstring(a, b, blocksize): # Slow.
     """xor string a and b, both of length blocksize."""
-    xored = ''
-    for i in xrange(blocksize):
-        xored += chr(ord(a[i]) ^ ord(b[i]))
+    xored = b''
+    for i in range(blocksize):
+        xored += bytearray((a[i] ^ b[i],))
     return xored
 
 
@@ -341,7 +363,7 @@ def cbc_encrypt(func, data, blocksize):
     assert len(IV) == blocksize
 
     ciphertext = IV
-    for block_index in xrange(len(data) / blocksize):
+    for block_index in range(int(len(data) / blocksize)):
         xored = xorstring(data, IV, blocksize)
         enc = func(xored)
 
@@ -360,8 +382,8 @@ def cbc_decrypt(func, data, blocksize):
     IV = data[0:blocksize]
     data = data[blocksize:]
 
-    plaintext = ''
-    for block_index in xrange(len(data) / blocksize):
+    plaintext = b''
+    for block_index in range(int(len(data) / blocksize)):
         temp = func(data[0:blocksize])
         temp2 = xorstring(temp, IV, blocksize)
         plaintext += temp2
@@ -374,6 +396,8 @@ def cbc_decrypt(func, data, blocksize):
 
 def blowcrypt_pack(msg, cipher):
     """."""
+    if type(msg) == str:
+        msg = msg.encode("utf-8")
     return '+OK ' + cipher.encrypt(padto(msg, 8))
 
 
@@ -429,7 +453,12 @@ q_dh1080 = (p_dh1080 - 1) // 2
 
 
 def dh1080_b64encode(s):
-    """A non-standard base64-encode."""
+    """
+    A non-standard base64-encode.
+
+    Expects a bytestring as input
+    Returns a utf-8 string as output
+    """
     b64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
     d = [0] * len(s) * 2
 
@@ -437,7 +466,7 @@ def dh1080_b64encode(s):
     m = 0x80
     i, j, k, t = 0, 0, 0, 0
     while i < L:
-        if ord(s[i >> 3]) & m:
+        if s[i >> 3] & m:
             t |= 1
         j += 1
         m >>= 1
@@ -467,7 +496,12 @@ def dh1080_b64encode(s):
 
 
 def dh1080_b64decode(s):
-    """A non-standard base64-encode."""
+    """
+    A non-standard base64-encode.
+
+    Expects a utf-8 string as input
+    Returns a bytestring as output
+    """
     b64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
     buf = [0] * 256
     for i in range(64):
@@ -521,7 +555,7 @@ def dh1080_b64decode(s):
         else:
             break
         k += 1
-    return ''.join(map(chr, d[0:i - 1]))
+    return b''.join(map(bytearray, (d[0:i - 1],)))
 
 
 def dh_validate_public(public, q, p):
@@ -642,7 +676,7 @@ def bytes2int(b):
     n = 0
     for p in b:
         n *= 256
-        n += ord(p)
+        n += p
     return n
 
 
@@ -650,9 +684,9 @@ def int2bytes(n):
     """Integer to variable length big endian."""
     if n == 0:
         return '\x00'
-    b = ''
+    b = b''
     while n:
-        b = chr(n % 256) + b
+        b = bytearray((n % 256,)) + b
         n //= 256
     return b
 
@@ -1127,7 +1161,7 @@ def fish_decrypt_keys():
     global fish_cyphers
 
     fish_keys_tmp = {}
-    for target, key in fish_keys.iteritems():
+    for target, key in fish_keys.items():
         ### DECRYPT Targets/Keys ###
         fish_keys_tmp[blowcrypt_unpack(
             target,
@@ -1243,7 +1277,7 @@ def fish_list_keys(buffer):
         weechat.prnt(buffer, "NO KEYS!\n")
         return
 
-    for (target, key) in sorted(fish_keys.iteritems()):
+    for (target, key) in sorted(fish_keys.items()):
         (server, nick) = target.split("/")
         weechat.prnt(buffer, "\t%s(%s): %s" % (nick, server, key))
 
