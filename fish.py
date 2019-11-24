@@ -288,7 +288,13 @@ class Blowfish:
             plaintext = cbc_decrypt(blowfish.decrypt, base64.b64decode(data), 8)
 
         if type(plaintext) == bytes:
-            plaintext = plaintext.decode("utf-8")
+            try:
+                plaintext = plaintext.decode("utf-8")
+            except UnicodeDecodeError:
+                try:
+                    plaintext = plaintext.decode("ascii")
+                except UnicodeDecodeError:
+                    plaintext = plaintext.decode("utf-8", "ignore")
         return plaintext
 
     def encrypt(self, data):
