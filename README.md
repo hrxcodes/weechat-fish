@@ -47,5 +47,8 @@ Run `make` to compile the custom blowfish library. If you store your weechat scr
 
 Otherwise copy the resulting `fish.py` and `weechat.so` to your weechat installations `python` directory.
 
+For `fish.py` to load [pycryptodome][pycryptodome] or the old `pycrypto` lib are required for CBC de-/encryption.
+
 [weechat-secure]: http://dev.weechat.org/post/2013/08/04/Secured-data
 [flakes-fish10]: https://github.com/flakes/mirc_fish_10
+[pycryptodome]: https://pycryptodome.readthedocs.io/en/latest/src/installation.html
