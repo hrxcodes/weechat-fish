@@ -170,7 +170,7 @@ def fish_config_init():
 
     fish_config_option["announce"] = weechat.config_new_option(
         fish_config_file, fish_config_section["look"], "announce",
-        "boolean", "annouce if messages are being encrypted or not", "", 0,
+        "boolean", "announce if messages are being encrypted or not", "", 0,
         0, "on", "on", 0, "", "", "", "", "", "")
 
     fish_config_option["marker"] = weechat.config_new_option(
@@ -766,7 +766,7 @@ def fish_modifier_in_notice_cb(data, modifier, server_name, string):
             fish_announce_unencrypted(buffer, target)
             return string
 
-        msg = "Key exchange for %s sucessful" % target
+        msg = "Key exchange for %s successful" % target
         if fish_DH1080ctx[targetl].cbc:
             msg += " (CBC mode)"
         fish_alert(buffer, msg)
@@ -1179,7 +1179,7 @@ def fish_decrypt_keys():
 
 def fish_success():
     weechat.prnt("",
-                 "%s%sblowkey: succesfully loaded\n" % (
+                 "%s%sblowkey: successfully loaded\n" % (
                      weechat.prefix("join"),
                      weechat.color("_green"))
     )
