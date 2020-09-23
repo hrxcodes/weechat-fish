@@ -170,7 +170,7 @@ def fish_config_init():
 
     fish_config_option["announce"] = weechat.config_new_option(
         fish_config_file, fish_config_section["look"], "announce",
-        "boolean", "annouce if messages are being encrypted or not", "", 0,
+        "boolean", "announce if messages are being encrypted or not", "", 0,
         0, "on", "on", 0, "", "", "", "", "", "")
 
     fish_config_option["marker"] = weechat.config_new_option(
@@ -742,7 +742,7 @@ def fish_modifier_in_notice_cb(data, modifier, server_name, string):
     global fish_DH1080ctx, fish_keys, fish_cyphers
 
     match = re.match(
-        r"^(:(.*?)!.*? NOTICE (.*?) :)((DH1080_INIT |DH1080_INIT_CBC |DH1080_FINISH |\+OK |mcps )?.*)$",
+        r"^(?:@time=[\d:TZ.-]+\s)?(:(.*?)!.*? NOTICE (.*?) :)((DH1080_INIT |DH1080_INIT_CBC |DH1080_FINISH |\+OK |mcps )?.*)$",
         string)
     #match.group(0): message
     #match.group(1): msg without payload
@@ -766,7 +766,7 @@ def fish_modifier_in_notice_cb(data, modifier, server_name, string):
             fish_announce_unencrypted(buffer, target)
             return string
 
-        msg = "Key exchange for %s sucessful" % target
+        msg = "Key exchange for %s successful" % target
         if fish_DH1080ctx[targetl].cbc:
             msg += " (CBC mode)"
         fish_alert(buffer, msg)
@@ -830,7 +830,7 @@ def fish_modifier_in_privmsg_cb(data, modifier, server_name, string):
     global fish_keys, fish_cyphers
 
     match = re.match(
-        r"^(:(.*?)!.*? PRIVMSG (.*?) :)(\x01ACTION )?((\+OK |mcps )?.*?)(\x01)?$",
+        r"^(?:@time=[\d:TZ.-]+\s)(:(.*?)!.*? PRIVMSG (.*?) :)(\x01ACTION )?((\+OK |mcps )?.*?)(\x01)?$",
         string)
     #match.group(0): message
     #match.group(1): msg without payload
@@ -878,7 +878,7 @@ def fish_modifier_in_privmsg_cb(data, modifier, server_name, string):
 def fish_modifier_in_topic_cb(data, modifier, server_name, string):
     global fish_keys, fish_cyphers
 
-    match = re.match(r"^(:.*?!.*? TOPIC (.*?) :)((\+OK |mcps )?.*)$", string)
+    match = re.match(r"^(?:@time=[\d:TZ.-]+\s)(:.*?!.*? TOPIC (.*?) :)((\+OK |mcps )?.*)$", string)
     #match.group(0): message
     #match.group(1): msg without payload
     #match.group(2): channel
@@ -912,7 +912,7 @@ def fish_modifier_in_topic_cb(data, modifier, server_name, string):
 def fish_modifier_in_332_cb(data, modifier, server_name, string):
     global fish_keys, fish_cyphers
 
-    match = re.match(r"^(:.*? 332 .*? (.*?) :)((\+OK |mcps )?.*)$", string)
+    match = re.match(r"^(?:@time=[\d:TZ.-]+\s)(:.*? 332 .*? (.*?) :)((\+OK |mcps )?.*)$", string)
     if not match:
         return string
 
@@ -1179,7 +1179,7 @@ def fish_decrypt_keys():
 
 def fish_success():
     weechat.prnt("",
-                 "%s%sblowkey: succesfully loaded\n" % (
+                 "%s%sblowkey: successfully loaded\n" % (
                      weechat.prefix("join"),
                      weechat.color("_green"))
     )
