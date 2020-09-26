@@ -1306,11 +1306,9 @@ def fish_list_keys(buffer, filterOnServer=None):
 
     for (target, key) in sorted(fish_keys.items()):
         (server, nick) = target.split("/")
-        if filterOnServer:
-            if server == filterOnServer:
-                weechat.prnt(buffer, "\t%s(%s): %s" % (nick, server, key))
-        else:
-            weechat.prnt(buffer, "\t%s(%s): %s" % (nick, server, key))
+        if filterOnServer and server != filterOnServer:
+            continue
+        weechat.prnt(buffer, "\t%s(%s): %s" % (nick, server, key))
 
 
 def fish_msg_w_marker(msg):
