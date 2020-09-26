@@ -830,7 +830,7 @@ def fish_modifier_in_privmsg_cb(data, modifier, server_name, string):
     global fish_keys, fish_cyphers
 
     match = re.match(
-        r"^(?:@time=[\d:TZ.-]+\s)(:(.*?)!.*? PRIVMSG (.*?) :)(\x01ACTION )?((\+OK |mcps )?.*?)(\x01)?$",
+        r"^(?:@time=[\d:TZ.-]+\s)?(:(.*?)!.*? PRIVMSG (.*?) :)(\x01ACTION )?((\+OK |mcps )?.*?)(\x01)?$",
         string)
     #match.group(0): message
     #match.group(1): msg without payload
@@ -878,7 +878,7 @@ def fish_modifier_in_privmsg_cb(data, modifier, server_name, string):
 def fish_modifier_in_topic_cb(data, modifier, server_name, string):
     global fish_keys, fish_cyphers
 
-    match = re.match(r"^(?:@time=[\d:TZ.-]+\s)(:.*?!.*? TOPIC (.*?) :)((\+OK |mcps )?.*)$", string)
+    match = re.match(r"^(?:@time=[\d:TZ.-]+\s)?(:.*?!.*? TOPIC (.*?) :)((\+OK |mcps )?.*)$", string)
     #match.group(0): message
     #match.group(1): msg without payload
     #match.group(2): channel
@@ -912,7 +912,7 @@ def fish_modifier_in_topic_cb(data, modifier, server_name, string):
 def fish_modifier_in_332_cb(data, modifier, server_name, string):
     global fish_keys, fish_cyphers
 
-    match = re.match(r"^(?:@time=[\d:TZ.-]+\s)(:.*? 332 .*? (.*?) :)((\+OK |mcps )?.*)$", string)
+    match = re.match(r"^(?:@time=[\d:TZ.-]+\s)?(:.*? 332 .*? (.*?) :)((\+OK |mcps )?.*)$", string)
     if not match:
         return string
 
@@ -1025,16 +1025,25 @@ def fish_cmd_blowkey(data, buffer, args):
     global fish_keys, fish_cyphers, fish_DH1080ctx
     global fish_config_option, fish_secure_cipher
 
-    if args == "" or args == "list":
+    if args == "":
         fish_list_keys(buffer)
-
         return weechat.WEECHAT_RC_OK
 
-    elif args =="genkey":
+    elif args == "genkey":
         fish_secure_genkey(buffer)
         return weechat.WEECHAT_RC_OK
 
     argv = args.split(" ")
+
+    if argv[0] == "list":
+        if len(argv) == 3 and argv[1] == "-server":
+            filterOnServer = argv[2]
+            fish_list_keys(buffer, filterOnServer)
+            return weechat.WEECHAT_RC_OK
+
+        fish_list_keys(buffer)
+
+        return weechat.WEECHAT_RC_OK
 
     if (len(argv) > 2 and argv[1] == "-server"):
         server_name = argv[2]
@@ -1082,6 +1091,18 @@ def fish_cmd_blowkey(data, buffer, args):
             del fish_cyphers[targetl]
 
         weechat.prnt(buffer, "set key for %s to %s" % (target, argv2eol))
+
+        return weechat.WEECHAT_RC_OK
+
+    if argv[0] == "show":
+        if not len(argv) >= 2:
+            return weechat.WEECHAT_RC_ERROR
+
+        if targetl not in fish_keys:
+            weechat.prnt(buffer, "could not find key for %s" % (targetl))
+            return weechat.WEECHAT_RC_ERROR
+
+        weechat.prnt(buffer, "key for %s is %s" % (target, fish_keys[targetl]))
 
         return weechat.WEECHAT_RC_OK
 
@@ -1274,7 +1295,7 @@ def fish_alert(buffer, message):
     weechat.prnt(buffer, "%s%s" % (mark, message))
 
 
-def fish_list_keys(buffer):
+def fish_list_keys(buffer, filterOnServer=None):
     global fish_keys
 
     weechat.prnt(buffer, "\tFiSH Keys: form target(server): key")
@@ -1285,6 +1306,8 @@ def fish_list_keys(buffer):
 
     for (target, key) in sorted(fish_keys.items()):
         (server, nick) = target.split("/")
+        if filterOnServer and server != filterOnServer:
+            continue
         weechat.prnt(buffer, "\t%s(%s): %s" % (nick, server, key))
 
 
@@ -1315,9 +1338,10 @@ if (__name__ == "__main__" and import_ok and
             SCRIPT_LICENSE, SCRIPT_DESC, "fish_unload_cb", "")):
 
     weechat.hook_command("blowkey", "Manage FiSH keys",
-            "[list] | [genkey] |set [-server <server>] [<target>] <key> "
+            "[list] | list [-server <server>] | [genkey] | set [-server <server>] [<target>] <key> "
             "| remove [-server <server>] <target> "
-            "| exchange [-server <server>] [-ecb] [<nick>]",
+            "| exchange [-server <server>] [-ecb] [<nick>] "
+            "| show [-server <server>] <nick>",
             "Add, change or remove key for target or perform DH1080\n"
             "keyexchange with <nick>.\n"
             "Target can be a channel or a nick.\n"
@@ -1325,18 +1349,22 @@ if (__name__ == "__main__" and import_ok and
             "Without arguments this command lists all keys.\n"
             "\n"
             "Examples:\n"
-            "Set the key for a channel: /blowkey set -server freenet #blowfish key\n"
-            "Remove the key:            /blowkey remove #blowfish\n"
-            "Set the key for a query:   /blowkey set nick secret+key\n"
-            "List all keys:             /blowkey\n\n"
+            "Set the key for a channel:   /blowkey set -server freenet #blowfish key\n"
+            "Remove the key:              /blowkey remove #blowfish\n"
+            "Set the key for a query:     /blowkey set nick secret+key\n"
+            "Show a specific key:         /blowkey show -server freenet nick \n"
+            "List keys, filter on server: /blowkey list -server freenet\n"
+            "List all keys:               /blowkey\n"
             "\n** stores keys in plaintext by default **\n\n"
-            "DH1080:                    /blowkey exchange nick\n"
-            "DH1080 (no CBC):           /blowkey exchange -ecb nick\n"
+            "DH1080:                      /blowkey exchange nick\n"
+            "DH1080 (no CBC):             /blowkey exchange -ecb nick\n"
             "\nPlease read the source for a note about DH1080 key exchange\n",
             "list"
             "|| genkey"
+            "|| list %(irc_channel)|%(nicks)|-server %(irc_servers) %- "
             "|| set %(irc_channel)|%(nicks)|-server %(irc_servers) %- "
             "|| remove %(irc_channel)|%(nicks)|-server %(irc_servers) %- "
+            "|| show %(irc_channel)|%(nicks)|-server %(irc_servers) %- "
             "|| exchange %(nick)|-server %(irc_servers) %-|-ecb",
             "fish_cmd_blowkey", "")
 
