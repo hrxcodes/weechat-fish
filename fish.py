@@ -1065,7 +1065,9 @@ def fish_cmd_blowkey(data, buffer, args):
     # if no target user has been specified grab the one from the buffer if it is private
     if argv[0] == "exchange" and len(argv) == 1 and buffer_type == "private":
         target_user = weechat.buffer_get_string(buffer, "localvar_channel")
-    elif argv[0] == "set" and (buffer_type == "private" or buffer_type == "channel") and len(argv) == 2:
+    elif argv[0] == "set" and buffer_type in ["channel", "private"] and len(argv) == 2:
+        target_user = weechat.buffer_get_string(buffer, "localvar_channel")
+    elif argv[0] == "show" and buffer_type in ["channel", "private"] and len(argv) == 1:
         target_user = weechat.buffer_get_string(buffer, "localvar_channel")
     elif len(argv) < 2:
         return weechat.WEECHAT_RC_ERROR
@@ -1095,9 +1097,6 @@ def fish_cmd_blowkey(data, buffer, args):
         return weechat.WEECHAT_RC_OK
 
     if argv[0] == "show":
-        if not len(argv) >= 2:
-            return weechat.WEECHAT_RC_ERROR
-
         if targetl not in fish_keys:
             weechat.prnt(buffer, "could not find key for %s" % (targetl))
             return weechat.WEECHAT_RC_ERROR
