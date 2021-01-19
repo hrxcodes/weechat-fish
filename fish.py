@@ -62,7 +62,7 @@ from __future__ import print_function
 
 SCRIPT_NAME = "fish"
 SCRIPT_AUTHOR = "David Flatz <david@upcs.at>"
-SCRIPT_VERSION = "0.11.0"
+SCRIPT_VERSION = "0.11.1"
 SCRIPT_LICENSE = "GPL3"
 SCRIPT_DESC = "FiSH for weechat"
 CONFIG_FILE_NAME = SCRIPT_NAME
@@ -269,8 +269,12 @@ class Blowfish:
         Returns ECB/CBC decrypted string, depending on the key type
 
         Expects utf-8 encoded or raw byte encrypted string
-        Returns utf-8 encoded decrypted string
+        Returns
+            utf-8 encoded decrypted string
+            boolean flag indicating whether the original ciphertext was broken or not
         """
+        broken = False
+
         if type(data) == str:
             data = data.encode("utf-8")
 
@@ -285,7 +289,7 @@ class Blowfish:
             blowfish = Crypto.Cipher.Blowfish.new(
                 self.key, Crypto.Cipher.Blowfish.MODE_ECB
             )
-            plaintext = cbc_decrypt(blowfish.decrypt, base64.b64decode(data), 8)
+            plaintext, broken = cbc_decrypt(blowfish.decrypt, blowcrypt_b64decode(data), 8)
 
         if type(plaintext) == bytes:
             try:
@@ -295,7 +299,7 @@ class Blowfish:
                     plaintext = plaintext.decode("ascii")
                 except UnicodeDecodeError:
                     plaintext = plaintext.decode("utf-8", "ignore")
-        return plaintext
+        return plaintext, broken
 
     def encrypt(self, data):
         """
@@ -340,6 +344,18 @@ def blowcrypt_b64encode(s):
         s = s[8:]
     return res
 
+def blowcrypt_b64decode(s):
+    """
+        A padding-fixing base64-decode
+
+        If incoming message was cut off, e.g. due to ircd message length limits
+        this function will ensure it's padded to a valid length before performing
+        the base64 decode that yields the raw ciphertext
+    """
+    missing_padding = len(s) % 4
+    if missing_padding:
+        s += b"="* (4 - missing_padding)
+    return base64.b64decode(s)
 
 def padto(msg, length):
     """Pads 'msg' with zeroes until it's length is divisible by 'length'.
@@ -383,7 +399,9 @@ def cbc_encrypt(func, data, blocksize):
 
 def cbc_decrypt(func, data, blocksize):
     """See cbc_encrypt."""
-    assert len(data) % blocksize == 0
+    broken = False
+    if len(data) % blocksize != 0:
+        broken = True
 
     IV = data[0:blocksize]
     data = data[blocksize:]
@@ -397,7 +415,7 @@ def cbc_decrypt(func, data, blocksize):
         data = data[blocksize:]
 
     assert len(plaintext) % blocksize == 0
-    return plaintext
+    return plaintext, broken
 
 
 def blowcrypt_pack(msg, cipher):
@@ -434,11 +452,11 @@ def blowcrypt_unpack(msg, cipher):
             raise MalformedError
 
     try:
-        plain = cipher.decrypt(raw)
+        plain, broken = cipher.decrypt(raw)
     except ValueError:
         raise MalformedError
 
-    return plain.strip('\x00').replace('\n','')
+    return plain.strip('\x00').replace('\n',''), broken
 
 
 #
@@ -815,9 +833,11 @@ def fish_modifier_in_notice_cb(data, modifier, server_name, string):
         else:
             b = fish_cyphers[targetl]
 
-        clean = blowcrypt_unpack(match.group(4), b)
+        clean, broken = blowcrypt_unpack(match.group(4), b)
 
         fish_announce_encrypted(buffer, target)
+        if broken:
+            fish_announce_broken(buffer, target)
 
         return "%s%s" % (match.group(1), fish_msg_w_marker(clean))
 
@@ -852,22 +872,22 @@ def fish_modifier_in_privmsg_cb(data, modifier, server_name, string):
 
     if not match.group(6):
         fish_announce_unencrypted(buffer, target)
-
         return string
 
     if targetl not in fish_keys:
         fish_announce_unencrypted(buffer, target)
-
         return string
-
-    fish_announce_encrypted(buffer, target)
 
     if targetl not in fish_cyphers:
         b = Blowfish(fish_keys[targetl])
         fish_cyphers[targetl] = b
     else:
         b = fish_cyphers[targetl]
-    clean = blowcrypt_unpack(match.group(5), b)
+    clean, broken = blowcrypt_unpack(match.group(5), b)
+
+    fish_announce_encrypted(buffer, target)
+    if broken:
+        fish_announce_broken(buffer, target)
 
     if not match.group(4):
         return "%s%s" % (match.group(1), fish_msg_w_marker(clean))
@@ -902,9 +922,11 @@ def fish_modifier_in_topic_cb(data, modifier, server_name, string):
         fish_cyphers[targetl] = b
     else:
         b = fish_cyphers[targetl]
-    clean = blowcrypt_unpack(match.group(3), b)
+    clean, broken = blowcrypt_unpack(match.group(3), b)
 
     fish_announce_encrypted(buffer, target)
+    if broken:
+        fish_announce_broken(buffer, target)
 
     return "%s%s" % (match.group(1), fish_msg_w_marker(clean))
 
@@ -932,9 +954,11 @@ def fish_modifier_in_332_cb(data, modifier, server_name, string):
     else:
         b = fish_cyphers[targetl]
 
-    clean = blowcrypt_unpack(match.group(3), b)
+    clean, broken = blowcrypt_unpack(match.group(3), b)
 
     fish_announce_encrypted(buffer, target)
+    if broken:
+        fish_announce_broken(buffer, target)
 
     return "%s%s" % (match.group(1), fish_msg_w_marker(clean))
 
@@ -1189,10 +1213,9 @@ def fish_decrypt_keys():
     fish_keys_tmp = {}
     for target, key in fish_keys.items():
         ### DECRYPT Targets/Keys ###
-        fish_keys_tmp[blowcrypt_unpack(
-            target,
-            fish_secure_cipher)] = blowcrypt_unpack(key,
-                                                  fish_secure_cipher)
+        target, _ = blowcrypt_unpack(target, fish_secure_cipher)
+        key, _ = blowcrypt_unpack(key, fish_secure_cipher)
+        fish_keys_tmp[target] = key
 
     fish_keys = fish_keys_tmp
 
@@ -1248,6 +1271,23 @@ def fish_secure_genkey(buffer):
         weechat.command(buffer, "/secure set fish %s" % newKey)
 
 
+def fish_get_target_buffer(buffer, server, nick):
+    """
+        Return current buffer or newly created one
+
+        If we get a private message and there is no buffer yet, create one and
+        jump back to the previous buffer
+    """
+    if (
+        weechat.info_get("irc_is_nick", nick) and
+        weechat.buffer_get_string(buffer, "localvar_type") != "private"
+    ):
+        weechat.command(buffer, "/mute -all query %s" % nick)
+        buffer = weechat.info_get("irc_buffer", "%s,%s" % (server, nick))
+        weechat.command(buffer, "/input jump_previously_visited_buffer")
+    return buffer
+
+
 def fish_announce_encrypted(buffer, target):
     global fish_encryption_announced, fish_config_option
 
@@ -1256,14 +1296,7 @@ def fish_announce_encrypted(buffer, target):
         return
 
     (server, nick) = target.split("/")
-
-    if (weechat.info_get("irc_is_nick", nick) and
-            weechat.buffer_get_string(buffer, "localvar_type") != "private"):
-        # if we get a private message and there no buffer yet, create one and
-        # jump back to the previous buffer
-        weechat.command(buffer, "/mute -all query %s" % nick)
-        buffer = weechat.info_get("irc_buffer", "%s,%s" % (server, nick))
-        weechat.command(buffer, "/input jump_previously_visited_buffer")
+    buffer = fish_get_target_buffer(buffer, server, nick)
 
     fish_alert(buffer, "Messages to/from %s are encrypted." % target)
 
@@ -1283,6 +1316,18 @@ def fish_announce_unencrypted(buffer, target):
             weechat.color("chat")))
 
     del fish_encryption_announced[target]
+
+
+def fish_announce_broken(buffer, target):
+    global fish_encryption_announced, fish_config_option
+
+    if not weechat.config_boolean(fish_config_option['announce']):
+        return
+
+    (server, nick) = target.split("/")
+    buffer = fish_get_target_buffer(buffer, server, nick)
+
+    fish_alert(buffer, "Message from %s was not fully decrypted because it cut off" % target)
 
 
 def fish_alert(buffer, message):
