@@ -914,7 +914,6 @@ def fish_modifier_in_topic_cb(data, modifier, server_name, string):
 
     if targetl not in fish_keys or not match.group(4):
         fish_announce_unencrypted(buffer, target)
-
         return string
 
     if targetl not in fish_cyphers:
@@ -945,7 +944,6 @@ def fish_modifier_in_332_cb(data, modifier, server_name, string):
 
     if targetl not in fish_keys or not match.group(4):
         fish_announce_unencrypted(buffer, target)
-
         return string
 
     if targetl not in fish_cyphers:
@@ -977,7 +975,6 @@ def fish_modifier_out_privmsg_cb(data, modifier, server_name, string):
 
     if targetl not in fish_keys:
         fish_announce_unencrypted(buffer, target)
-
         return string
 
     if targetl not in fish_cyphers:
@@ -1008,7 +1005,6 @@ def fish_modifier_out_topic_cb(data, modifier, server_name, string):
 
     if targetl not in fish_keys:
         fish_announce_unencrypted(buffer, target)
-
         return string
 
     if targetl not in fish_cyphers:
@@ -1023,10 +1019,9 @@ def fish_modifier_out_topic_cb(data, modifier, server_name, string):
     return "%s%s" % (match.group(1), cypher)
 
 
-def fish_modifier_input_text(data, modifier, server_name, string):
+def fish_modifier_input_text(data, modifier, buffer, string):
     if weechat.string_is_command_char(string):
         return string
-    buffer = weechat.current_buffer()
     target = "%s/%s" % (
             weechat.buffer_get_string(buffer, "localvar_server"),
             weechat.buffer_get_string(buffer, "localvar_channel")
