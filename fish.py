@@ -433,11 +433,14 @@ def blowcrypt_unpack(msg, cipher):
 
     if rest[0] == "*":
         if cipher.mode != Blowfish.MODE_CBC:
-            raise ValueError
+            if not bool(cipher.key.decode("utf-8").startswith('cbc:')):
+                key = "cbc:" + cipher.key.decode("utf-8")
+                return blowcrypt_unpack(msg, Blowfish(key))
         raw = rest[1:]
     else:
         if cipher.mode != Blowfish.MODE_ECB:
-            raise ValueError
+            key = cipher.key.decode("utf-8")
+            return blowcrypt_unpack(msg, Blowfish(key))
         if len(rest) < 12:
             raise MalformedError
 
