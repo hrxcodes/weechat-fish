@@ -113,6 +113,13 @@ fish_secure_key = ""
 fish_secure_cipher = None
 
 #
+# HELPERS
+#
+
+class MalformedError(RuntimeError):
+    pass
+
+#
 # CONFIG
 #
 
@@ -171,6 +178,11 @@ def fish_config_init():
     fish_config_option["announce"] = weechat.config_new_option(
         fish_config_file, fish_config_section["look"], "announce",
         "boolean", "announce if messages are being encrypted or not", "", 0,
+        0, "on", "on", 0, "", "", "", "", "", "")
+
+    fish_config_option["announce_wrong_key_type"] = weechat.config_new_option(
+        fish_config_file, fish_config_section["look"], "announce_wrong_key_type",
+        "boolean", "announce when messages are received with the wrong key type", "", 0,
         0, "on", "on", 0, "", "", "", "", "", "")
 
     fish_config_option["marker"] = weechat.config_new_option(
@@ -425,8 +437,14 @@ def blowcrypt_pack(msg, cipher):
     return '+OK ' + cipher.encrypt(padto(msg, 8))
 
 
-def blowcrypt_unpack(msg, cipher):
-    """."""
+def blowcrypt_unpack(msg, cipher, wrong_key_type=False):
+    """
+    Returns: str(message), bool(broken), bool(wrong_key_type)
+    Returns
+        utf-8 encoded decrypted string
+        boolean flag indicating whether the original ciphertext was broken or not
+        boolean flag returns True when a message prefix does not match the key type prefix
+    """
     if not (msg.startswith('+OK ') or msg.startswith('mcps ')):
         raise ValueError
     _, rest = msg.split(' ', 1)
@@ -435,12 +453,12 @@ def blowcrypt_unpack(msg, cipher):
         if cipher.mode != Blowfish.MODE_CBC:
             if not bool(cipher.key.decode("utf-8").startswith('cbc:')):
                 key = "cbc:" + cipher.key.decode("utf-8")
-                return blowcrypt_unpack(msg, Blowfish(key))
+                return blowcrypt_unpack(msg, Blowfish(key), wrong_key_type=True)
         raw = rest[1:]
     else:
         if cipher.mode != Blowfish.MODE_ECB:
             key = cipher.key.decode("utf-8")
-            return blowcrypt_unpack(msg, Blowfish(key))
+            return blowcrypt_unpack(msg, Blowfish(key), wrong_key_type=True)
         if len(rest) < 12:
             raise MalformedError
 
@@ -459,8 +477,10 @@ def blowcrypt_unpack(msg, cipher):
     except ValueError:
         raise MalformedError
 
-    return plain.strip('\x00').replace('\n',''), broken
+    if wrong_key_type:
+        return plain.strip('\x00').replace('\n',''), broken, wrong_key_type
 
+    return plain.strip('\x00').replace('\n',''), broken, wrong_key_type
 
 #
 # DH1080
@@ -837,11 +857,13 @@ def fish_modifier_in_notice_cb(data, modifier, server_name, string):
         else:
             b = fish_cyphers[targetl]
 
-        clean, broken = blowcrypt_unpack(match.group(4), b)
+        clean, broken, wrong_key_type = blowcrypt_unpack(match.group(4), b)
 
         fish_announce_encrypted(buffer, target)
         if broken:
             fish_announce_broken(buffer, target)
+        if wrong_key_type:
+            fish_announce_wrong_key_type(buffer, target)
 
         return "%s%s" % (match.group(1), fish_msg_w_marker(clean))
 
@@ -888,11 +910,13 @@ def fish_modifier_in_privmsg_cb(data, modifier, server_name, string):
         fish_cyphers[targetl] = b
     else:
         b = fish_cyphers[targetl]
-    clean, broken = blowcrypt_unpack(match.group(5), b)
+    clean, broken, wrong_key_type = blowcrypt_unpack(match.group(5), b)
 
     fish_announce_encrypted(buffer, target)
     if broken:
         fish_announce_broken(buffer, target)
+    if wrong_key_type:
+        fish_announce_wrong_key_type(buffer, target)
 
     if not match.group(4):
         return "%s%s" % (match.group(1), fish_msg_w_marker(clean))
@@ -926,11 +950,13 @@ def fish_modifier_in_topic_cb(data, modifier, server_name, string):
         fish_cyphers[targetl] = b
     else:
         b = fish_cyphers[targetl]
-    clean, broken = blowcrypt_unpack(match.group(3), b)
+    clean, broken, wrong_key_type = blowcrypt_unpack(match.group(3), b)
 
     fish_announce_encrypted(buffer, target)
     if broken:
         fish_announce_broken(buffer, target)
+    if wrong_key_type:
+        fish_announce_wrong_key_type(buffer, target)
 
     return "%s%s" % (match.group(1), fish_msg_w_marker(clean))
 
@@ -957,11 +983,13 @@ def fish_modifier_in_332_cb(data, modifier, server_name, string):
     else:
         b = fish_cyphers[targetl]
 
-    clean, broken = blowcrypt_unpack(match.group(3), b)
+    clean, broken, wrong_key_type = blowcrypt_unpack(match.group(3), b)
 
     fish_announce_encrypted(buffer, target)
     if broken:
         fish_announce_broken(buffer, target)
+    if wrong_key_type:
+        fish_announce_wrong_key_type(buffer, target)
 
     return "%s%s" % (match.group(1), fish_msg_w_marker(clean))
 
@@ -1215,8 +1243,8 @@ def fish_decrypt_keys():
     fish_keys_tmp = {}
     for target, key in fish_keys.items():
         ### DECRYPT Targets/Keys ###
-        target, _ = blowcrypt_unpack(target, fish_secure_cipher)
-        key, _ = blowcrypt_unpack(key, fish_secure_cipher)
+        target, _, _ = blowcrypt_unpack(target, fish_secure_cipher)
+        key, _, _ = blowcrypt_unpack(key, fish_secure_cipher)
         fish_keys_tmp[target] = key
 
     fish_keys = fish_keys_tmp
@@ -1321,8 +1349,6 @@ def fish_announce_unencrypted(buffer, target):
 
 
 def fish_announce_broken(buffer, target):
-    global fish_encryption_announced, fish_config_option
-
     if not weechat.config_boolean(fish_config_option['announce']):
         return
 
@@ -1331,6 +1357,14 @@ def fish_announce_broken(buffer, target):
 
     fish_alert(buffer, "Message from %s was not fully decrypted because it cut off" % target)
 
+def fish_announce_wrong_key_type(buffer, target):
+    if not weechat.config_boolean(fish_config_option['announce_wrong_key_type']):
+        return
+
+    (server, nick) = target.split("/")
+    buffer = fish_get_target_buffer(buffer, server, nick)
+
+    fish_alert(buffer, "Message from %s does not match the key type set on this buffer" % target)
 
 def fish_alert(buffer, message):
     mark = "%s%s%s\t" % (
