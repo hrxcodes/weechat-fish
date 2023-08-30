@@ -763,7 +763,8 @@ def fish_modifier_in_notice_cb(data, modifier, server_name, string):
     global fish_DH1080ctx, fish_keys, fish_cyphers
 
     match = re.match(
-        r"^(?:@time=[\d:TZ.-]+\s)?(:(.*?)!.*? NOTICE (.*?) :)((DH1080_INIT |DH1080_INIT_CBC |DH1080_FINISH |\+OK |mcps )?.*)$",
+        r"^((?:@[^ ]* )?:(.*?)!.*? NOTICE (.*?) :)"
+        r"((DH1080_INIT |DH1080_FINISH |\+OK |mcps )?.*)$",
         string)
     #match.group(0): message
     #match.group(1): msg without payload
@@ -853,7 +854,8 @@ def fish_modifier_in_privmsg_cb(data, modifier, server_name, string):
     global fish_keys, fish_cyphers
 
     match = re.match(
-        r"^(?:@time=[\d:TZ.-]+\s)?(:(.*?)!.*? PRIVMSG (.*?) :)(\x01ACTION )?((\+OK |mcps )?.*?)(\x01)?$",
+        r"^((?:@[^ ]* )?:(.*?)!.*? PRIVMSG (.*?) :)(\x01ACTION )?"
+        r"((\+OK |mcps )?.*?)(\x01)?$",
         string)
     #match.group(0): message
     #match.group(1): msg without payload
@@ -901,7 +903,7 @@ def fish_modifier_in_privmsg_cb(data, modifier, server_name, string):
 def fish_modifier_in_topic_cb(data, modifier, server_name, string):
     global fish_keys, fish_cyphers
 
-    match = re.match(r"^(?:@time=[\d:TZ.-]+\s)?(:.*?!.*? TOPIC (.*?) :)((\+OK |mcps )?.*)$", string)
+    match = re.match(r"^((?:@[^ ]* )?:.*?!.*? TOPIC (.*?) :)((\+OK |mcps )?.*)$", string)
     #match.group(0): message
     #match.group(1): msg without payload
     #match.group(2): channel
@@ -936,7 +938,7 @@ def fish_modifier_in_topic_cb(data, modifier, server_name, string):
 def fish_modifier_in_332_cb(data, modifier, server_name, string):
     global fish_keys, fish_cyphers
 
-    match = re.match(r"^(?:@time=[\d:TZ.-]+\s)?(:.*? 332 .*? (.*?) :)((\+OK |mcps )?.*)$", string)
+    match = re.match(r"^((?:@[^ ]* )?:.*? 332 .*? (.*?) :)((\+OK |mcps )?.*)$", string)
     if not match:
         return string
 
