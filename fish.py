@@ -84,10 +84,13 @@ except ImportError:
     import_ok = False
 
 try:
-    import Crypto.Cipher.Blowfish
-except:
-    print("PyCryptodome or PyCrypto must be installed to use fish")
-    import_ok = False
+    import Crypto.Cipher.Blowfish as CryptoBlowfish
+except ImportError:
+    try:
+        import Cryptodome.Cipher.Blowfish as CryptoBlowfish
+    except ImportError:
+        print("PyCryptodome or PyCrypto must be installed to use fish")
+        import_ok = False
 
 try:
     bfLib = cdll.LoadLibrary(path.join(path.dirname(__file__),
@@ -286,8 +289,8 @@ class Blowfish:
             cplaintext[size - 1] = b'\0'
             plaintext = string_at(cplaintext)
         elif self.mode == Blowfish.MODE_CBC:
-            blowfish = Crypto.Cipher.Blowfish.new(
-                self.key, Crypto.Cipher.Blowfish.MODE_ECB
+            blowfish = CryptoBlowfish.new(
+                self.key, CryptoBlowfish.MODE_ECB
             )
             plaintext, broken = cbc_decrypt(blowfish.decrypt, blowcrypt_b64decode(data), 8)
 
@@ -319,8 +322,8 @@ class Blowfish:
             cciphertext[size - 1] = b'\0'
             return string_at(cciphertext).decode("utf-8")
         elif self.mode == Blowfish.MODE_CBC:
-            blowfish = Crypto.Cipher.Blowfish.new(
-                self.key, Crypto.Cipher.Blowfish.MODE_ECB
+            blowfish = CryptoBlowfish.new(
+                self.key, CryptoBlowfish.MODE_ECB
             )
             ciphertext = cbc_encrypt(blowfish.encrypt, data, 8)
             return "*{ciphertext}".format(
