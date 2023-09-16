@@ -451,7 +451,7 @@ def blowcrypt_unpack(msg, cipher, wrong_key_type=False):
 
     if rest[0] == "*":
         if cipher.mode != Blowfish.MODE_CBC:
-            if not bool(cipher.key.decode("utf-8").startswith('cbc:')):
+            if not cipher.key.decode("utf-8").startswith('cbc:'):
                 key = "cbc:" + cipher.key.decode("utf-8")
                 return blowcrypt_unpack(msg, Blowfish(key), wrong_key_type=True)
         raw = rest[1:]
@@ -476,9 +476,6 @@ def blowcrypt_unpack(msg, cipher, wrong_key_type=False):
         plain, broken = cipher.decrypt(raw)
     except ValueError:
         raise MalformedError
-
-    if wrong_key_type:
-        return plain.strip('\x00').replace('\n',''), broken, wrong_key_type
 
     return plain.strip('\x00').replace('\n',''), broken, wrong_key_type
 
