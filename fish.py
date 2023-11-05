@@ -1431,7 +1431,7 @@ if (__name__ == "__main__" and import_ok and
             "Examples:\n"
             "Set the key for a channel:   /blowkey set -server freenet #blowfish key\n"
             "Remove the key:              /blowkey remove #blowfish\n"
-            "Set the key for a query:     /blowkey set nick secret+key\n"
+            "Set the key for a query:     /blowkey set nick key\n"
             "Show a specific key:         /blowkey show -server freenet nick \n"
             "List keys, filter on server: /blowkey list -server freenet\n"
             "List all keys:               /blowkey\n"
