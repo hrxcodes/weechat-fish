@@ -62,7 +62,7 @@ from __future__ import print_function
 
 SCRIPT_NAME = "fish"
 SCRIPT_AUTHOR = "David Flatz <david@upcs.at>"
-SCRIPT_VERSION = "0.12"
+SCRIPT_VERSION = "0.13"
 SCRIPT_LICENSE = "GPL3"
 SCRIPT_DESC = "FiSH for weechat"
 CONFIG_FILE_NAME = SCRIPT_NAME
@@ -110,7 +110,11 @@ fish_config_option = {}
 fish_keys = {}
 fish_cyphers = {}
 fish_DH1080ctx = {}
-fish_encryption_announced = {}
+
+# True if we have already announced that messages are encrypted
+# False if user switched from encrypted to unencrypted
+# {"server/niCKname": True|False}
+fish_encryption_tracker = {}
 
 fish_secure_key = ""
 fish_secure_cipher = None
@@ -181,6 +185,11 @@ def fish_config_init():
     fish_config_option["announce"] = weechat.config_new_option(
         fish_config_file, fish_config_section["look"], "announce",
         "boolean", "announce if messages are being encrypted or not", "", 0,
+        0, "on", "on", 0, "", "", "", "", "", "")
+
+    fish_config_option["announce_clear_on_buffer_close"] = weechat.config_new_option(
+        fish_config_file, fish_config_section["look"], "announce_clear_on_buffer_close",
+        "boolean", "clear encryption tracker on buffer close", "", 0,
         0, "on", "on", 0, "", "", "", "", "", "")
 
     fish_config_option["announce_wrong_key_type"] = weechat.config_new_option(
@@ -802,6 +811,8 @@ def fish_modifier_in_notice_cb(data, modifier, server_name, string):
     targetl = target.lower()
     buffer = weechat.info_get("irc_buffer", "%s,%s" % (
             server_name, match.group(2)))
+    if not buffer:
+        buffer = fish_get_target_buffer(buffer, server_name, match.group(2))
 
     if match.group(5) == "DH1080_FINISH " and targetl in fish_DH1080ctx:
         if not dh1080_unpack(match.group(4), fish_DH1080ctx[targetl]):
@@ -836,8 +847,8 @@ def fish_modifier_in_notice_cb(data, modifier, server_name, string):
             msg += " (CBC mode)"
         fish_alert(buffer, msg)
 
-        weechat.command(buffer, "/mute -all notice %s %s" % (
-                match.group(2), reply))
+        weechat.command(buffer, "/mute notice -server %s %s %s" % (
+                server_name, match.group(2), reply))
 
         fish_keys[targetl] = dh1080_secret(fish_DH1080ctx[targetl])
         if targetl in fish_cyphers:
@@ -896,6 +907,8 @@ def fish_modifier_in_privmsg_cb(data, modifier, server_name, string):
     target = "%s/%s" % (server_name, dest)
     targetl = target.lower()
     buffer = weechat.info_get("irc_buffer", "%s,%s" % (server_name, dest))
+    if not buffer:
+        buffer = fish_get_target_buffer(buffer, server_name, match.group(2))
 
     if not match.group(6):
         fish_announce_unencrypted(buffer, target)
@@ -1063,6 +1076,21 @@ def fish_modifier_input_text(data, modifier, buffer, string):
     if targetl not in fish_keys:
         return string
     return fish_msg_w_marker(string)
+
+def fish_buffer_closing_cb(data, signal, signal_data):
+    # ignore if announce or announce_clear_on_buffer_close is off
+    if (not weechat.config_boolean(fish_config_option['announce']) or
+        not weechat.config_boolean(fish_config_option['announce_clear_on_buffer_close'])):
+        return weechat.WEECHAT_RC_OK
+
+    target = "%s/%s" % (
+        weechat.buffer_get_string(signal_data, "localvar_server"),
+        weechat.buffer_get_string(signal_data, "localvar_channel")
+    )
+    if target in fish_encryption_tracker.keys():
+        del fish_encryption_tracker[target]
+
+    return weechat.WEECHAT_RC_OK
 
 
 def fish_unload_cb():
@@ -1308,21 +1336,17 @@ def fish_get_target_buffer(buffer, server, nick):
         If we get a private message and there is no buffer yet, create one and
         jump back to the previous buffer
     """
-    if (
-        weechat.info_get("irc_is_nick", nick) and
-        weechat.buffer_get_string(buffer, "localvar_type") != "private"
-    ):
-        weechat.command(buffer, "/mute -all query %s" % nick)
+    if weechat.info_get("irc_is_nick", nick):
+        weechat.command(buffer, "/mute query -noswitch -server %s %s" % (server, nick))
         buffer = weechat.info_get("irc_buffer", "%s,%s" % (server, nick))
-        weechat.command(buffer, "/input jump_previously_visited_buffer")
     return buffer
 
 
 def fish_announce_encrypted(buffer, target):
-    global fish_encryption_announced, fish_config_option
+    global fish_encryption_tracker, fish_config_option
 
     if (not weechat.config_boolean(fish_config_option['announce']) or
-        fish_encryption_announced.get(target)):
+        fish_encryption_tracker.get(target, None) == True):
         return
 
     (server, nick) = target.split("/")
@@ -1330,14 +1354,14 @@ def fish_announce_encrypted(buffer, target):
 
     fish_alert(buffer, "Messages to/from %s are encrypted." % target)
 
-    fish_encryption_announced[target] = True
+    fish_encryption_tracker[target] = True
 
 
 def fish_announce_unencrypted(buffer, target):
-    global fish_encryption_announced, fish_config_option
+    global fish_encryption_tracker, fish_config_option
 
     if (not weechat.config_boolean(fish_config_option['announce']) or
-            not fish_encryption_announced.get(target)):
+        fish_encryption_tracker.get(target, None) == False):
         return
 
     fish_alert(buffer, "Messages to/from %s are %s*not*%s encrypted." % (
@@ -1345,7 +1369,7 @@ def fish_announce_unencrypted(buffer, target):
             weechat.color(weechat.config_color(fish_config_option["alert"])),
             weechat.color("chat")))
 
-    del fish_encryption_announced[target]
+    fish_encryption_tracker[target] = False
 
 
 def fish_announce_broken(buffer, target):
@@ -1460,3 +1484,4 @@ if (__name__ == "__main__" and import_ok and
     weechat.hook_modifier("irc_out_topic", "fish_modifier_out_topic_cb", "")
     weechat.hook_modifier("input_text_for_buffer", "fish_modifier_input_text", "")
     weechat.hook_config("fish.secure.key", "fish_secure_key_cb", "")
+    weechat.hook_signal("buffer_closing", "fish_buffer_closing_cb", "")
